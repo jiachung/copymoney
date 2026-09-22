@@ -1,0 +1,51 @@
+name: Daily Stock Screener
+
+on:
+  schedule:
+    # 매일 15:30 KST = 06:30 UTC (평일만)
+    - cron: '30 6 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '검사할 상위 종목 수'
+        required: false
+        default: '150'
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run stock screener
+        env:
+          KOREA_INVESTMENT_API_KEY: ${{ secrets.KOREA_INVESTMENT_API_KEY }}
+          KOREA_INVESTMENT_API_SECRET: ${{ secrets.KOREA_INVESTMENT_API_SECRET }}
+          KOREA_INVESTMENT_ACCOUNT: ${{ secrets.KOREA_INVESTMENT_ACCOUNT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCREEN_LIMIT: ${{ github.event.inputs.limit || '150' }}
+          OUTPUT_FILE: stock_signals.json
+          TZ: Asia/Seoul
+        run: python stock_screener.py
+
+      - name: Upload signals artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-signals-${{ github.run_id }}
+          path: stock_signals.json
+          if-no-files-found: ignore
+          retention-days: 30

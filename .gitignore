@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Output
+stock_signals.json
+*.log
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
