@@ -520,6 +520,27 @@ def _load_dotenv(path: str = ".env"):
             os.environ.setdefault(key, value)
 
 
+def _load_alert_state(path: str) -> Dict:
+    """오늘 이미 알림 보낸 종목 목록 로드. 날짜가 다르면 리셋."""
+    today = datetime.now().strftime("%Y%m%d")
+    if not os.path.exists(path):
+        return {"date": today, "codes": []}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        if state.get("date") != today:
+            return {"date": today, "codes": []}
+        return state
+    except Exception as e:
+        logger.warning(f"알림 상태 파일 로드 실패, 초기화: {e}")
+        return {"date": today, "codes": []}
+
+
+def _save_alert_state(path: str, state: Dict):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
 def main():
     _load_dotenv()
 
@@ -540,8 +561,10 @@ def main():
 
     limit = int(os.getenv("SCREEN_LIMIT", "150"))
 
+    alert_state_file = os.getenv("ALERT_STATE_FILE", "alert_state.json")
+
     try:
-        api = KoreaInvestmentAPI(api_key, api_secret, account)
+        api = KoreaInvestmentAPI(api_key, api_secret, account, mode=mode)
         screener = StockScreener(api)
         signals = screener.screen(limit=limit)
 
@@ -550,8 +573,22 @@ def main():
             json.dump(signals, f, ensure_ascii=False, indent=2)
         logger.info(f"결과 저장: {output_file}")
 
+        # 오늘 이미 알림 보낸 종목 필터링
+        alert_state = _load_alert_state(alert_state_file)
+        already_alerted = set(alert_state["codes"])
+        new_signals = [s for s in signals if s["code"] not in already_alerted]
+        skipped = len(signals) - len(new_signals)
+        logger.info(f"신호 {len(signals)}개 중 신규 {len(new_signals)}개 "
+                    f"(오늘 이미 알림: {skipped}개)")
+
         notifier = TelegramNotifier(telegram_token, telegram_chat_id)
-        notifier.send_signals(signals)
+        if new_signals:
+            notifier.send_signals(new_signals)
+            # 상태 업데이트
+            alert_state["codes"] = sorted(already_alerted.union(s["code"] for s in new_signals))
+            _save_alert_state(alert_state_file, alert_state)
+        else:
+            logger.info("신규 신호 없음 - Telegram 전송 스킵")
 
     except Exception as e:
         logger.error(f"실행 중 오류: {e}")

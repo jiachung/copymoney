@@ -1,9 +1,9 @@
 name: Daily Stock Screener
 
 on:
-  schedule:
-    # 매일 15:30 KST = 06:30 UTC (평일만)
-    - cron: '30 6 * * 1-5'
+  # 로컬 crontab 에서 스케줄 실행 (GitHub Actions cron 은 5시간+ 지연 이슈로 비활성)
+  # schedule:
+  #   - cron: '30 6 * * 1-5'
   workflow_dispatch:
     inputs:
       limit:

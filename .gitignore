@@ -12,6 +12,7 @@ venv/
 
 # Output
 stock_signals.json
+alert_state.json
 *.log
 
 # OS / Editor
