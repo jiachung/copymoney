@@ -31,9 +31,10 @@ jobs:
 
       - name: Run stock screener
         env:
-          KOREA_INVESTMENT_API_KEY: ${{ secrets.KOREA_INVESTMENT_API_KEY }}
-          KOREA_INVESTMENT_API_SECRET: ${{ secrets.KOREA_INVESTMENT_API_SECRET }}
-          KOREA_INVESTMENT_ACCOUNT: ${{ secrets.KOREA_INVESTMENT_ACCOUNT }}
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PROD_CODE: ${{ secrets.KIS_ACCOUNT_PROD_CODE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SCREEN_LIMIT: ${{ github.event.inputs.limit || '150' }}

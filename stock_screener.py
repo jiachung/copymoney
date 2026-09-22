@@ -499,16 +499,37 @@ class TelegramNotifier:
             logger.error(f"Telegram 전송 실패: {e}")
 
 
+def _load_dotenv(path: str = ".env"):
+    """로컬 실행 시 .env 파일이 있으면 환경변수로 로드 (덮어쓰지 않음)"""
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
 def main():
-    api_key = os.getenv("KOREA_INVESTMENT_API_KEY")
-    api_secret = os.getenv("KOREA_INVESTMENT_API_SECRET")
-    account = os.getenv("KOREA_INVESTMENT_ACCOUNT", "00000000-01")
+    _load_dotenv()
+
+    api_key = os.getenv("KIS_APP_KEY")
+    api_secret = os.getenv("KIS_APP_SECRET")
+    account_no = os.getenv("KIS_ACCOUNT_NO")
+    account_prod = os.getenv("KIS_ACCOUNT_PROD_CODE", "01")
     telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
     telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-    if not all([api_key, api_secret, telegram_token, telegram_chat_id]):
-        logger.error("필수 환경변수 누락: KOREA_INVESTMENT_API_KEY/SECRET, TELEGRAM_BOT_TOKEN/CHAT_ID")
+    if not all([api_key, api_secret, account_no, telegram_token, telegram_chat_id]):
+        logger.error("필수 환경변수 누락: KIS_APP_KEY/SECRET, KIS_ACCOUNT_NO, "
+                     "TELEGRAM_BOT_TOKEN/CHAT_ID")
         sys.exit(1)
+
+    account = f"{account_no}-{account_prod}"
 
     limit = int(os.getenv("SCREEN_LIMIT", "150"))
 

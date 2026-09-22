@@ -30,9 +30,10 @@ GitHub에 새 private 저장소 생성 후, 다음 파일들을 추가:
 
 | Key | 값 | 설명 |
 |-----|-----|------|
-| `KOREA_INVESTMENT_API_KEY` | 한국투자증권 API Key | 발급받은 API Key |
-| `KOREA_INVESTMENT_API_SECRET` | 한국투자증권 API Secret | 발급받은 API Secret |
-| `KOREA_INVESTMENT_ACCOUNT` | 00000000-01 | 계좌번호 (형식: XXXXXXXX-XX) |
+| `KIS_APP_KEY` | 한국투자증권 App Key | 발급받은 App Key |
+| `KIS_APP_SECRET` | 한국투자증권 App Secret | 발급받은 App Secret |
+| `KIS_ACCOUNT_NO` | 12345678 | 계좌번호 8자리 |
+| `KIS_ACCOUNT_PROD_CODE` | 01 | 계좌 상품코드 (기본 01) |
 | `TELEGRAM_BOT_TOKEN` | 123456:ABCdef... | Telegram 봇 토큰 |
 | `TELEGRAM_CHAT_ID` | 123456789 | Telegram 채팅방 ID |
 
