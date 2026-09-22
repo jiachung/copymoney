@@ -63,7 +63,8 @@ class KoreaInvestmentAPI:
             self._get_access_token()
 
     def _headers(self, tr_id: str) -> Dict[str, str]:
-        """API 요청 헤더 (tr_id 필수)"""
+        """API 요청 헤더 (tr_id 필수). GET 조회에는 content-type 붙이지 않음
+        — 붙이면 KIS 서버가 500 반환."""
         self._refresh_token_if_needed()
         return {
             "authorization": f"Bearer {self.access_token}",
@@ -71,14 +72,16 @@ class KoreaInvestmentAPI:
             "appsecret": self.api_secret,
             "tr_id": tr_id,
             "custtype": "P",  # P=개인, B=법인
-            "content-type": "application/json; charset=utf-8",
         }
 
     def _get(self, path: str, tr_id: str, params: Dict) -> Dict:
         """공통 GET 호출 + rt_cd 검사"""
         url = f"{self.BASE_URL}{path}"
         response = requests.get(url, headers=self._headers(tr_id), params=params, timeout=10)
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # 오류 응답 body를 함께 노출해서 진단 쉽게
+            body_preview = response.text[:300].replace("\n", " ")
+            raise RuntimeError(f"HTTP {response.status_code} on {path}: {body_preview}")
         result = response.json()
         # KIS는 HTTP 200에도 rt_cd로 실패 반환
         rt_cd = result.get("rt_cd")
