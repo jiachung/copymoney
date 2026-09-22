@@ -11,7 +11,21 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 
+# pyenv 등에서 SSL 인증서 이슈 우회 (FinanceDataReader / pandas.read_csv 대비)
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+except Exception:
+    pass
+
 import requests
+
+try:
+    import FinanceDataReader as fdr
+    HAS_FDR = True
+except Exception:
+    HAS_FDR = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,35 +108,69 @@ class KoreaInvestmentAPI:
         return result
 
     def get_daily_volume_ranking(self, limit: int = 100) -> List[Dict]:
-        """거래대금 상위 종목 조회 (KOSPI+KOSDAQ 통합)"""
+        """거래대금 상위 종목 조회.
+        FinanceDataReader (KRX 전종목) 를 우선 사용, 실패 시 KIS (KOSPI+KOSDAQ 각각 30개) 로 fallback.
+        스팩·코넥스는 스크리닝 부적합으로 제외."""
+        if HAS_FDR:
+            try:
+                return self._volume_rank_fdr(limit)
+            except Exception as e:
+                logger.warning(f"fdr 조회 실패, KIS 로 fallback: {e}")
+        return self._volume_rank_kis(limit)
+
+    @staticmethod
+    def _volume_rank_fdr(limit: int) -> List[Dict]:
+        """FinanceDataReader 로 KRX 전종목 거래대금 순위 조회."""
+        df = fdr.StockListing("KRX")
+        # 개별주만 (코넥스 제외), 스팩 제외
+        df = df[df["Market"].isin(["KOSPI", "KOSDAQ", "KOSDAQ GLOBAL"])]
+        df = df[~df["Name"].str.contains("스팩", na=False)]
+        df = df.sort_values("Amount", ascending=False).head(limit)
+        stocks = [
+            {
+                "code": row["Code"],
+                "name": row["Name"],
+                "volume": int(row["Volume"] or 0),
+            }
+            for _, row in df.iterrows()
+        ]
+        logger.info(f"[fdr] 거래대금 상위 {len(stocks)}개 종목 조회 완료 (스팩·코넥스 제외)")
+        return stocks
+
+    def _volume_rank_kis(self, limit: int) -> List[Dict]:
+        """KIS fallback: KOSPI(0001) + KOSDAQ(1001) 각각 조회 후 거래량 기준 병합.
+        KIS volume-rank 는 한 번에 최대 30건이라 시장별 분리 조회로 60개까지 커버."""
         path = "/uapi/domestic-stock/v1/quotations/volume-rank"
-        params = {
-            "fid_cond_mrkt_div_code": "J",   # J=주식 (KOSPI/KOSDAQ 통합)
-            "fid_cond_scr_div_code": "20171",
-            "fid_input_iscd": "0000",        # 0000=전체, 0001=KOSPI, 1001=KOSDAQ
-            "fid_div_cls_code": "0",         # 0=전체
-            "fid_blng_cls_code": "3",        # 3=거래금액순
-            "fid_trgt_cls_code": "111111111",
-            "fid_trgt_exls_cls_code": "000000",
-            "fid_input_price_1": "",
-            "fid_input_price_2": "",
-            "fid_vol_cnt": "",
-            "fid_input_date_1": "",
-        }
-        try:
-            result = self._get(path, self.TR_VOLUME_RANK, params)
-            stocks = []
-            for item in (result.get("output") or [])[:limit]:
-                stocks.append({
-                    "code": item.get("mksc_shrn_iscd"),
-                    "name": item.get("hts_kor_isnm"),
-                    "volume": item.get("acml_vol"),
-                })
-            logger.info(f"거래대금 상위 {len(stocks)}개 종목 조회 완료")
-            return stocks
-        except Exception as e:
-            logger.error(f"거래대금 조회 실패: {e}")
-            return []
+        merged: List[Dict] = []
+        for iscd in ("0001", "1001"):
+            params = {
+                "fid_cond_mrkt_div_code": "J",
+                "fid_cond_scr_div_code": "20171",
+                "fid_input_iscd": iscd,
+                "fid_div_cls_code": "0",
+                "fid_blng_cls_code": "3",
+                "fid_trgt_cls_code": "111111111",
+                "fid_trgt_exls_cls_code": "000000",
+                "fid_input_price_1": "",
+                "fid_input_price_2": "",
+                "fid_vol_cnt": "",
+                "fid_input_date_1": "",
+            }
+            try:
+                result = self._get(path, self.TR_VOLUME_RANK, params)
+                for item in (result.get("output") or []):
+                    merged.append({
+                        "code": item.get("mksc_shrn_iscd"),
+                        "name": item.get("hts_kor_isnm"),
+                        "volume": int(item.get("acml_vol", 0) or 0),
+                    })
+            except Exception as e:
+                logger.error(f"거래대금 조회 실패({iscd}): {e}")
+        # 거래량 desc 정렬 후 limit
+        merged.sort(key=lambda s: s["volume"], reverse=True)
+        merged = merged[:limit]
+        logger.info(f"[KIS] 거래대금 상위 {len(merged)}개 종목 조회 완료 (KOSPI+KOSDAQ 병합)")
+        return merged
 
     def get_30min_candles(self, stock_code: str, target_bars: int = 60,
                           trading_days: int = 6) -> List[Dict]:
