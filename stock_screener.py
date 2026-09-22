@@ -23,24 +23,27 @@ logger = logging.getLogger(__name__)
 class KoreaInvestmentAPI:
     """한국투자증권 OpenAPI 클래스"""
 
-    BASE_URL = "https://openapi.koreainvestment.com:9443"
+    REAL_URL = "https://openapi.koreainvestment.com:9443"
+    PAPER_URL = "https://openapivts.koreainvestment.com:29443"
 
-    # KIS OpenAPI tr_id (필수 헤더)
+    # KIS OpenAPI tr_id (필수 헤더). 시세 조회는 실전/모의 공통 사용 가능.
     TR_VOLUME_RANK = "FHPST01710000"
     TR_DAILY_CHART = "FHKST03010100"   # 국내주식 기간별 시세(일/주/월/년)
     TR_MINUTE_CHART = "FHKST03010200"  # 국내주식 시간별(분봉) 시세
 
-    def __init__(self, api_key: str, api_secret: str, account: str):
+    def __init__(self, api_key: str, api_secret: str, account: str, mode: str = "real"):
         self.api_key = api_key
         self.api_secret = api_secret
         self.account = account
+        self.mode = mode
+        self.base_url = self.PAPER_URL if mode == "paper" else self.REAL_URL
         self.access_token: Optional[str] = None
         self.token_expired_time: Optional[datetime] = None
         self._get_access_token()
 
     def _get_access_token(self):
         """접근 토큰 발급"""
-        url = f"{self.BASE_URL}/oauth2/tokenP"
+        url = f"{self.base_url}/oauth2/tokenP"
         body = {
             "grant_type": "client_credentials",
             "appkey": self.api_key,
@@ -76,7 +79,7 @@ class KoreaInvestmentAPI:
 
     def _get(self, path: str, tr_id: str, params: Dict) -> Dict:
         """공통 GET 호출 + rt_cd 검사"""
-        url = f"{self.BASE_URL}{path}"
+        url = f"{self.base_url}{path}"
         response = requests.get(url, headers=self._headers(tr_id), params=params, timeout=10)
         if response.status_code >= 400:
             # 오류 응답 body를 함께 노출해서 진단 쉽게
@@ -533,6 +536,7 @@ def main():
         sys.exit(1)
 
     account = f"{account_no}-{account_prod}"
+    mode = os.getenv("TRADE_MODE", "real").lower()  # real | paper
 
     limit = int(os.getenv("SCREEN_LIMIT", "150"))
 
