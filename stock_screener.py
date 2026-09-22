@@ -29,7 +29,8 @@ class KoreaInvestmentAPI:
     # KIS OpenAPI tr_id (필수 헤더). 시세 조회는 실전/모의 공통 사용 가능.
     TR_VOLUME_RANK = "FHPST01710000"
     TR_DAILY_CHART = "FHKST03010100"   # 국내주식 기간별 시세(일/주/월/년)
-    TR_MINUTE_CHART = "FHKST03010200"  # 국내주식 시간별(분봉) 시세
+    TR_MINUTE_CHART = "FHKST03010200"  # 국내주식 시간별(분봉) 시세 - 당일만
+    TR_MINUTE_HIST = "FHKST03010230"   # 국내주식 일별 분봉 시세 - 과거일자 지정 가능
 
     def __init__(self, api_key: str, api_secret: str, account: str, mode: str = "real"):
         self.api_key = api_key
@@ -123,64 +124,86 @@ class KoreaInvestmentAPI:
             logger.error(f"거래대금 조회 실패: {e}")
             return []
 
-    def get_30min_candles(self, stock_code: str) -> List[Dict]:
+    def get_30min_candles(self, stock_code: str, target_bars: int = 60,
+                          trading_days: int = 6) -> List[Dict]:
         """
-        30분봉 캔들 데이터 조회.
-        KIS 분봉 API는 1회 최대 30건 반환. 30분봉은 1분봉을 30개씩 집계.
-        여기서는 시간별 API를 여러 시각에 호출해 1분봉을 모은 뒤 30분 단위로 리샘플링.
+        30분봉 캔들 데이터 조회 (롤링 60바 VWAP용).
+        - 과거 분봉 API(FHKST03010230)로 최근 여러 거래일치 1분봉 수집
+        - 각 거래일별로 11:30/13:30/15:30 3회 호출 (하루 6시간 커버)
+        - 1분봉을 30분 시간 버킷으로 리샘플링 → 마지막 target_bars개 반환
         """
-        # 하루치 1분봉 확보를 위해 15:30, 14:30, 13:30, ... 순으로 호출
-        # KIS 분봉 API는 fid_input_hour_1(HHMMSS) 기준 이전 30건 반환
-        query_times = ["153000", "143000", "133000", "123000", "113000", "103000", "093000"]
-        raw_minutes: List[Dict] = []
+        raw_by_time: Dict[str, Dict] = {}  # time → bar (dedup)
 
-        for hour in query_times:
-            path = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
-            params = {
-                "fid_etc_cls_code": "",
-                "fid_cond_mrkt_div_code": "J",
-                "fid_input_iscd": stock_code,
-                "fid_input_hour_1": hour,   # HHMMSS
-                "fid_pw_data_incu_yn": "N",  # N=장중데이터만
-            }
-            try:
-                result = self._get(path, self.TR_MINUTE_CHART, params)
-                for item in (result.get("output2") or []):
-                    close = int(item.get("stck_prpr", 0) or 0)
-                    if close == 0:
-                        continue
-                    raw_minutes.append({
-                        "time": f"{item.get('stck_bsop_date','')}{item.get('stck_cntg_hour','')}",
-                        "open": int(item.get("stck_oprc", 0) or 0),
-                        "high": int(item.get("stck_hgpr", 0) or 0),
-                        "low": int(item.get("stck_lwpr", 0) or 0),
-                        "close": close,
-                        "volume": int(item.get("cntg_vol", 0) or 0),
-                    })
-            except Exception as e:
-                logger.warning(f"{stock_code} 분봉 조회 실패({hour}): {e}")
-                continue
+        # 오늘부터 과거로 이동. 주말/공휴일 응답 없으면 그냥 스킵됨.
+        days_collected = 0
+        for days_ago in range(trading_days + 5):  # 여유
+            date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y%m%d")
+            got_any = False
+            for hour in ("113000", "133000", "153000"):
+                path = "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+                params = {
+                    "fid_cond_mrkt_div_code": "J",
+                    "fid_input_iscd": stock_code,
+                    "fid_input_hour_1": hour,
+                    "fid_input_date_1": date,
+                    "fid_pw_data_incu_yn": "N",
+                    "fid_fake_tick_incu_yn": "N",
+                    "fid_etc_cls_code": "",
+                }
+                try:
+                    result = self._get(path, self.TR_MINUTE_HIST, params)
+                    for item in (result.get("output2") or []):
+                        close = int(item.get("stck_prpr", 0) or 0)
+                        if close == 0:
+                            continue
+                        t = f"{item.get('stck_bsop_date','')}{item.get('stck_cntg_hour','')}"
+                        if t in raw_by_time:
+                            continue
+                        raw_by_time[t] = {
+                            "time": t,
+                            "open": int(item.get("stck_oprc", 0) or 0),
+                            "high": int(item.get("stck_hgpr", 0) or 0),
+                            "low": int(item.get("stck_lwpr", 0) or 0),
+                            "close": close,
+                            "volume": int(item.get("cntg_vol", 0) or 0),
+                        }
+                        got_any = True
+                except Exception as e:
+                    logger.warning(f"{stock_code} 분봉 조회 실패(date={date}, hour={hour}): {e}")
+                    continue
+            if got_any:
+                days_collected += 1
+                if days_collected >= trading_days:
+                    break
 
-        if not raw_minutes:
+        if not raw_by_time:
             return []
 
-        # 시간 오름차순 정렬 후 30개씩 묶어 30분봉 생성
-        raw_minutes.sort(key=lambda x: x["time"])
+        # 30분 시간 버킷으로 리샘플링 (예: 09:00~09:29 → 093000, 09:30~09:59 → 093000+30)
+        buckets: Dict[str, List[Dict]] = {}
+        for m in raw_by_time.values():
+            # time = YYYYMMDDHHMMSS. 분 부분을 30분 단위로 내림
+            date_part = m["time"][:8]
+            hh = int(m["time"][8:10])
+            mm = int(m["time"][10:12])
+            bucket_min = (mm // 30) * 30
+            bucket_key = f"{date_part}{hh:02d}{bucket_min:02d}00"
+            buckets.setdefault(bucket_key, []).append(m)
+
         candles: List[Dict] = []
-        for i in range(0, len(raw_minutes), 30):
-            chunk = raw_minutes[i:i + 30]
-            if not chunk:
-                continue
+        for key in sorted(buckets.keys()):
+            chunk = sorted(buckets[key], key=lambda x: x["time"])
             candles.append({
-                "time": chunk[-1]["time"],
+                "time": key,
                 "open": chunk[0]["open"],
                 "high": max(c["high"] for c in chunk),
                 "low": min(c["low"] for c in chunk),
                 "close": chunk[-1]["close"],
                 "volume": sum(c["volume"] for c in chunk),
             })
-        logger.debug(f"{stock_code}: 30분봉 {len(candles)}개 생성")
-        return candles
+
+        logger.debug(f"{stock_code}: 30분봉 {len(candles)}개 생성 (마지막 {target_bars}개 사용)")
+        return candles[-target_bars:]
 
     def _get_period_candles(self, stock_code: str, period_code: str, count: int) -> List[Dict]:
         """일/주/월봉 공통 조회"""
@@ -346,7 +369,7 @@ class StockScreener:
                 candles_daily = self.api.get_daily_candles(code, days_back=100)
                 candles_weekly = self.api.get_weekly_candles(code, weeks_back=50)
 
-                if len(candles_30min) < 5 or len(candles_daily) < 70 or len(candles_weekly) < 10:
+                if len(candles_30min) < 20 or len(candles_daily) < 70 or len(candles_weekly) < 10:
                     logger.debug(f"{code}: 데이터 부족 (30m={len(candles_30min)}, "
                                  f"D={len(candles_daily)}, W={len(candles_weekly)})")
                     continue
