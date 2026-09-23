@@ -395,10 +395,15 @@ class TechnicalAnalyzer:
 class StockScreener:
     """메인 스크리닝 엔진"""
 
-    def __init__(self, api: KoreaInvestmentAPI):
+    def __init__(self, api: KoreaInvestmentAPI,
+                 max_5d_gap_pct: float = 5.0,
+                 max_vwap_gap_pct: float = 5.0):
         self.api = api
         self.analyzer = TechnicalAnalyzer()
         self.signals: List[Dict] = []
+        # 과열 필터 상한 (진입하기 늦은 종목 제외)
+        self.max_5d_gap_pct = max_5d_gap_pct
+        self.max_vwap_gap_pct = max_vwap_gap_pct
 
     def screen(self, limit: int = 100) -> List[Dict]:
         logger.info("=== 스크리닝 시작 ===")
@@ -450,8 +455,18 @@ class StockScreener:
                 if not daily_ok:
                     continue
 
+                # STEP 2.5: 일봉 과열 필터 (5일선 대비 이격도 상한)
+                daily_gap_pct = (current_price - sma_5_d) / sma_5_d * 100
+                if daily_gap_pct > self.max_5d_gap_pct:
+                    continue
+
                 # STEP 3: 30분봉 VWAP
                 if current_price <= vwap_30min:
+                    continue
+
+                # STEP 3.5: VWAP 과열 필터 (VWAP 대비 이격도 상한)
+                vwap_gap_pct = (current_price - vwap_30min) / vwap_30min * 100
+                if vwap_gap_pct > self.max_vwap_gap_pct:
                     continue
 
                 # 신호 강도
@@ -634,9 +649,12 @@ def main():
 
     alert_state_file = os.getenv("ALERT_STATE_FILE", "alert_state.json")
 
+    max_5d = float(os.getenv("MAX_5D_GAP_PCT", "5.0"))
+    max_vwap = float(os.getenv("MAX_VWAP_GAP_PCT", "5.0"))
+
     try:
         api = KoreaInvestmentAPI(api_key, api_secret, account, mode=mode)
-        screener = StockScreener(api)
+        screener = StockScreener(api, max_5d_gap_pct=max_5d, max_vwap_gap_pct=max_vwap)
         signals = screener.screen(limit=limit)
 
         output_file = os.getenv("OUTPUT_FILE", "stock_signals.json")
