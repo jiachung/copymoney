@@ -187,7 +187,8 @@ class KoreaInvestmentAPI:
         for days_ago in range(trading_days + 5):  # 여유
             date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y%m%d")
             got_any = False
-            for hour in ("113000", "133000", "153000"):
+            # 100000 추가: 09:00~09:30 개장 30분 분봉 포함 (VWAP 정확도)
+            for hour in ("100000", "113000", "133000", "153000"):
                 path = "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
                 params = {
                     "fid_cond_mrkt_div_code": "J",
