@@ -15,10 +15,15 @@ jobs:
   screen:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write  # data/signals.db 자동 커밋용
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,3 +55,22 @@ jobs:
           path: stock_signals.json
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Commit signal DB
+        if: success()
+        run: |
+          if [ ! -f data/signals.db ]; then
+            echo "DB 파일 없음, 커밋 스킵"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/signals.db
+          if git diff --cached --quiet; then
+            echo "변경사항 없음, 커밋 스킵"
+            exit 0
+          fi
+          git commit -m "chore(data): 신호 이력 업데이트 (run ${{ github.run_id }})"
+          # 다른 워크플로우와 push 충돌 대비 pull --rebase
+          git pull --rebase origin main
+          git push

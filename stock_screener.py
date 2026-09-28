@@ -663,6 +663,14 @@ def main():
             json.dump(signals, f, ensure_ascii=False, indent=2)
         logger.info(f"결과 저장: {output_file}")
 
+        # 신호 이력 DB 저장 (backtest / forward tracking 기반)
+        try:
+            from storage import save_signals as _save_signals_db
+            db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
+            _save_signals_db(signals, db_path)
+        except Exception as e:
+            logger.warning(f"신호 DB 저장 실패 (계속 진행): {e}")
+
         # 오늘 이미 알림 보낸 종목 필터링
         alert_state = _load_alert_state(alert_state_file)
         already_alerted = set(alert_state["codes"])
