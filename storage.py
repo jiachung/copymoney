@@ -42,7 +42,26 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE INDEX IF NOT EXISTS idx_signals_code ON signals(code);
 CREATE INDEX IF NOT EXISTS idx_signals_run_at ON signals(run_at);
 CREATE INDEX IF NOT EXISTS idx_signals_code_time ON signals(code, run_at);
+
+-- 성과 추적: (종목, 신호일자, N일후) 단위. 신호일자당 최초 신호의 진입가 사용.
+CREATE TABLE IF NOT EXISTS performance (
+    code TEXT NOT NULL,
+    signal_date TEXT NOT NULL,      -- YYYYMMDD
+    entry_price INTEGER NOT NULL,
+    signal_strength INTEGER,
+    horizon_days INTEGER NOT NULL,  -- 1, 3, 5, 10
+    exit_date TEXT,                 -- YYYYMMDD (실제 도달한 거래일)
+    exit_price INTEGER,
+    return_pct REAL,
+    computed_at TEXT,
+    PRIMARY KEY (code, signal_date, horizon_days)
+);
+
+CREATE INDEX IF NOT EXISTS idx_perf_signal_date ON performance(signal_date);
+CREATE INDEX IF NOT EXISTS idx_perf_horizon ON performance(horizon_days);
 """
+
+HORIZONS = (1, 3, 5, 10)
 
 
 def get_db(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -120,5 +139,133 @@ def stats_summary(db_path: str = DEFAULT_DB_PATH) -> Dict:
             FROM signals
         """).fetchone()
         return dict(row)
+    finally:
+        conn.close()
+
+
+def get_first_signal_per_day(db_path: str, since_date: str) -> List[Dict]:
+    """(code, signal_date) 별 최초 신호의 진입가.
+    since_date: YYYYMMDD, 이 날짜 이후(포함) 신호만."""
+    conn = get_db(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT code, substr(run_at, 1, 10) AS signal_date,
+                   MIN(run_at) AS first_run_at,
+                   current_price AS entry_price,
+                   signal_strength
+            FROM signals
+            WHERE substr(replace(run_at,'-',''), 1, 8) >= ?
+            GROUP BY code, signal_date
+            ORDER BY signal_date, code
+        """, (since_date,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_computed_performance(db_path: str) -> set:
+    """이미 계산된 (code, signal_date, horizon) 집합."""
+    if not os.path.exists(db_path):
+        return set()
+    conn = get_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT code, signal_date, horizon_days FROM performance"
+        ).fetchall()
+        return {(r["code"], r["signal_date"], r["horizon_days"]) for r in rows}
+    finally:
+        conn.close()
+
+
+def save_performance_row(db_path: str, row: Dict):
+    conn = get_db(db_path)
+    try:
+        conn.execute("""
+            INSERT OR REPLACE INTO performance
+            (code, signal_date, entry_price, signal_strength, horizon_days,
+             exit_date, exit_price, return_pct, computed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            row["code"], row["signal_date"], row["entry_price"],
+            row.get("signal_strength"), row["horizon_days"],
+            row.get("exit_date"), row.get("exit_price"),
+            row.get("return_pct"),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def weekly_performance_stats(db_path: str, since_date: str, until_date: str) -> Dict:
+    """지정 기간 신호에 대한 성과 통계.
+    since_date, until_date: YYYYMMDD (signal_date 기준)."""
+    if not os.path.exists(db_path):
+        return {}
+    conn = get_db(db_path)
+    try:
+        # 신호 개수 & 강도별
+        row = conn.execute("""
+            SELECT COUNT(DISTINCT code || signal_date) AS total_signals
+            FROM performance
+            WHERE signal_date BETWEEN ? AND ?
+        """, (since_date, until_date)).fetchone()
+        total = row["total_signals"] if row else 0
+
+        # 강도 분포 (신호 단위 - horizon=1 기준으로 unique)
+        strength_rows = conn.execute("""
+            SELECT signal_strength, COUNT(*) AS cnt
+            FROM performance
+            WHERE signal_date BETWEEN ? AND ? AND horizon_days = 1
+            GROUP BY signal_strength
+            ORDER BY signal_strength DESC
+        """, (since_date, until_date)).fetchall()
+
+        # horizon 별 통계
+        horizon_stats = {}
+        for h in HORIZONS:
+            stats_row = conn.execute("""
+                SELECT COUNT(*) AS n,
+                       AVG(return_pct) AS avg_return,
+                       SUM(CASE WHEN return_pct > 0 THEN 1 ELSE 0 END) AS wins,
+                       MAX(return_pct) AS best_return,
+                       MIN(return_pct) AS worst_return
+                FROM performance
+                WHERE signal_date BETWEEN ? AND ?
+                  AND horizon_days = ?
+                  AND return_pct IS NOT NULL
+            """, (since_date, until_date, h)).fetchone()
+            horizon_stats[h] = dict(stats_row) if stats_row else {}
+
+        # Top winners/losers (1일 후 기준)
+        top_win = conn.execute("""
+            SELECT p.code, s.name, p.return_pct
+            FROM performance p
+            LEFT JOIN signals s ON s.code = p.code
+            WHERE p.signal_date BETWEEN ? AND ?
+              AND p.horizon_days = 3
+              AND p.return_pct IS NOT NULL
+            GROUP BY p.code, p.signal_date
+            ORDER BY p.return_pct DESC LIMIT 3
+        """, (since_date, until_date)).fetchall()
+
+        top_lose = conn.execute("""
+            SELECT p.code, s.name, p.return_pct
+            FROM performance p
+            LEFT JOIN signals s ON s.code = p.code
+            WHERE p.signal_date BETWEEN ? AND ?
+              AND p.horizon_days = 3
+              AND p.return_pct IS NOT NULL
+            GROUP BY p.code, p.signal_date
+            ORDER BY p.return_pct ASC LIMIT 3
+        """, (since_date, until_date)).fetchall()
+
+        return {
+            "total_signals": total,
+            "by_strength": [dict(r) for r in strength_rows],
+            "by_horizon": horizon_stats,
+            "top_winners": [dict(r) for r in top_win],
+            "top_losers": [dict(r) for r in top_lose],
+        }
     finally:
         conn.close()

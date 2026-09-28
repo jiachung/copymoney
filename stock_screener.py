@@ -688,6 +688,30 @@ def main():
         else:
             logger.info("신규 신호 없음 - Telegram 전송 스킵")
 
+        # 성과 계산: 매일 15:30 이후 실행에서만
+        now = datetime.now()
+        if now.hour >= 15 and now.minute >= 30:
+            try:
+                from performance import compute_pending_performance
+                db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
+                compute_pending_performance(api, db_path)
+            except Exception as e:
+                logger.warning(f"성과 계산 실패 (계속 진행): {e}")
+
+        # 주간 리포트: 월요일 오전 실행에서만
+        if now.weekday() == 0 and now.hour < 12:
+            try:
+                from performance import build_weekly_report
+                db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
+                report = build_weekly_report(db_path)
+                if report:
+                    notifier._send_message(report)
+                    logger.info("주간 리포트 전송 완료")
+                else:
+                    logger.info("주간 리포트: 지난주 성과 데이터 없음, 스킵")
+            except Exception as e:
+                logger.warning(f"주간 리포트 실패 (계속 진행): {e}")
+
     except Exception as e:
         logger.error(f"실행 중 오류: {e}")
         sys.exit(1)
