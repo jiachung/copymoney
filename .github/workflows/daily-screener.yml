@@ -9,12 +9,12 @@ on:
       limit:
         description: '검사할 상위 종목 수'
         required: false
-        default: '150'
+        default: '100'
 
 jobs:
   screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: write  # data/signals.db 자동 커밋용
 
@@ -42,7 +42,7 @@ jobs:
           KIS_ACCOUNT_PROD_CODE: ${{ secrets.KIS_ACCOUNT_PROD_CODE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SCREEN_LIMIT: ${{ github.event.inputs.limit || '150' }}
+          SCREEN_LIMIT: ${{ github.event.inputs.limit || '100' }}
           OUTPUT_FILE: stock_signals.json
           TZ: Asia/Seoul
         run: python stock_screener.py
