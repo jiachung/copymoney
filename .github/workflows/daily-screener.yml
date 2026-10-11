@@ -42,6 +42,7 @@ jobs:
           KIS_ACCOUNT_PROD_CODE: ${{ secrets.KIS_ACCOUNT_PROD_CODE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEETS_WEBHOOK_URL: ${{ secrets.SHEETS_WEBHOOK_URL }}
           SCREEN_LIMIT: ${{ github.event.inputs.limit || '100' }}
           OUTPUT_FILE: stock_signals.json
           TZ: Asia/Seoul

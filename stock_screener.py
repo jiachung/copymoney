@@ -664,9 +664,9 @@ def main():
         logger.info(f"결과 저장: {output_file}")
 
         # 신호 이력 DB 저장 (backtest / forward tracking 기반)
+        db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
         try:
             from storage import save_signals as _save_signals_db
-            db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
             _save_signals_db(signals, db_path)
         except Exception as e:
             logger.warning(f"신호 DB 저장 실패 (계속 진행): {e}")
@@ -693,7 +693,6 @@ def main():
         if now.hour >= 15 and now.minute >= 30:
             try:
                 from performance import compute_pending_performance
-                db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
                 compute_pending_performance(api, db_path)
             except Exception as e:
                 logger.warning(f"성과 계산 실패 (계속 진행): {e}")
@@ -702,7 +701,6 @@ def main():
         if now.weekday() == 0 and now.hour < 12:
             try:
                 from performance import build_weekly_report
-                db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
                 report = build_weekly_report(db_path)
                 if report:
                     notifier._send_message(report)
@@ -711,6 +709,15 @@ def main():
                     logger.info("주간 리포트: 지난주 성과 데이터 없음, 스킵")
             except Exception as e:
                 logger.warning(f"주간 리포트 실패 (계속 진행): {e}")
+
+        # Google Sheets 동기화 (SHEETS_WEBHOOK_URL 세팅된 경우만)
+        sheets_url = os.getenv("SHEETS_WEBHOOK_URL")
+        if sheets_url:
+            try:
+                from sheets_sync import sync_all
+                sync_all(db_path, sheets_url)
+            except Exception as e:
+                logger.warning(f"Sheets 동기화 실패 (계속 진행): {e}")
 
     except Exception as e:
         logger.error(f"실행 중 오류: {e}")
