@@ -627,12 +627,18 @@ def main():
 
     limit = int(os.getenv("SCREEN_LIMIT", "150"))
 
-    max_5d = float(os.getenv("MAX_5D_GAP_PCT", "5.0"))
+    # 두 임계값 분리:
+    #   STORE = DB 저장 (분석용 데이터 수집, 넓게 설정)
+    #   ALERT = Telegram 발송 (알림 노이즈 통제, 좁게 설정)
+    # ALERT 미지정 시 MAX_5D_GAP_PCT 호환성 유지, 그래도 없으면 STORE 와 동일
+    max_5d_store = float(os.getenv("MAX_5D_GAP_PCT_STORE", "10.0"))
+    max_5d_alert = float(os.getenv("MAX_5D_GAP_PCT_ALERT",
+                                   os.getenv("MAX_5D_GAP_PCT", "5.0")))
     max_vwap = float(os.getenv("MAX_VWAP_GAP_PCT", "5.0"))
 
     try:
         api = KoreaInvestmentAPI(api_key, api_secret, account, mode=mode)
-        screener = StockScreener(api, max_5d_gap_pct=max_5d, max_vwap_gap_pct=max_vwap)
+        screener = StockScreener(api, max_5d_gap_pct=max_5d_store, max_vwap_gap_pct=max_vwap)
         signals = screener.screen(limit=limit)
 
         output_file = os.getenv("OUTPUT_FILE", "stock_signals.json")
@@ -658,14 +664,19 @@ def main():
 
         new_signals = [s for s in signals if s["code"] not in already_alerted]
         skipped = len(signals) - len(new_signals)
+        # Telegram 알림용 추가 필터 (5D 이격도 ≤ max_5d_alert)
+        alert_signals = [s for s in new_signals if s.get("price_vs_5d", 0) <= max_5d_alert]
+        over_threshold = len(new_signals) - len(alert_signals)
         logger.info(f"신호 {len(signals)}개 중 신규 {len(new_signals)}개 "
-                    f"(오늘 이미 알림: {skipped}개)")
+                    f"(오늘 이미 알림: {skipped}개), "
+                    f"알림 임계값(5D≤{max_5d_alert}%) 통과: {len(alert_signals)}개 "
+                    f"(수집용만: {over_threshold}개)")
 
         notifier = TelegramNotifier(telegram_token, telegram_chat_id)
-        if new_signals:
-            notifier.send_signals(new_signals)
+        if alert_signals:
+            notifier.send_signals(alert_signals)
         else:
-            logger.info("신규 신호 없음 - Telegram 전송 스킵")
+            logger.info("알림 대상 신호 없음 - Telegram 전송 스킵")
 
         # 성과 계산: 매일 15:30 이후 실행에서만
         now = datetime.now()
