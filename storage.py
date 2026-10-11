@@ -8,7 +8,7 @@ import os
 import sqlite3
 import logging
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,29 @@ def stats_summary(db_path: str = DEFAULT_DB_PATH) -> Dict:
             FROM signals
         """).fetchone()
         return dict(row)
+    finally:
+        conn.close()
+
+
+def get_codes_alerted_today(db_path: str, today_date: str,
+                            exclude_run_at: Optional[str] = None) -> set:
+    """오늘 (today_date = 'YYYY-MM-DD') 이미 저장된 신호의 종목코드 집합.
+    exclude_run_at 지정 시 해당 run 은 제외."""
+    if not os.path.exists(db_path):
+        return set()
+    conn = get_db(db_path)
+    try:
+        if exclude_run_at:
+            rows = conn.execute("""
+                SELECT DISTINCT code FROM signals
+                WHERE substr(run_at, 1, 10) = ? AND run_at != ?
+            """, (today_date, exclude_run_at)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT DISTINCT code FROM signals
+                WHERE substr(run_at, 1, 10) = ?
+            """, (today_date,)).fetchall()
+        return {r["code"] for r in rows}
     finally:
         conn.close()
 

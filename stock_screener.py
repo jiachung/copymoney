@@ -607,27 +607,6 @@ def _load_dotenv(path: str = ".env"):
             os.environ.setdefault(key, value)
 
 
-def _load_alert_state(path: str) -> Dict:
-    """오늘 이미 알림 보낸 종목 목록 로드. 날짜가 다르면 리셋."""
-    today = datetime.now().strftime("%Y%m%d")
-    if not os.path.exists(path):
-        return {"date": today, "codes": []}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            state = json.load(f)
-        if state.get("date") != today:
-            return {"date": today, "codes": []}
-        return state
-    except Exception as e:
-        logger.warning(f"알림 상태 파일 로드 실패, 초기화: {e}")
-        return {"date": today, "codes": []}
-
-
-def _save_alert_state(path: str, state: Dict):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
-
 def main():
     _load_dotenv()
 
@@ -648,8 +627,6 @@ def main():
 
     limit = int(os.getenv("SCREEN_LIMIT", "150"))
 
-    alert_state_file = os.getenv("ALERT_STATE_FILE", "alert_state.json")
-
     max_5d = float(os.getenv("MAX_5D_GAP_PCT", "5.0"))
     max_vwap = float(os.getenv("MAX_VWAP_GAP_PCT", "5.0"))
 
@@ -663,17 +640,22 @@ def main():
             json.dump(signals, f, ensure_ascii=False, indent=2)
         logger.info(f"결과 저장: {output_file}")
 
-        # 신호 이력 DB 저장 (backtest / forward tracking 기반)
+        # 중복 알림 방지: 오늘 이전 run 에서 이미 알림 간 종목은 DB 로 확인
+        # (alert_state.json 은 GH Actions 러너에서 세션 간 유지 안 되어서 DB 기반으로 전환)
         db_path = os.getenv("SIGNAL_DB_PATH", "data/signals.db")
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        this_run_at = signals[0].get("timestamp") if signals else None
+
+        from storage import get_codes_alerted_today
+        already_alerted = get_codes_alerted_today(db_path, today_date, exclude_run_at=this_run_at)
+
+        # 신호 이력 DB 저장 (backtest / forward tracking 기반)
         try:
             from storage import save_signals as _save_signals_db
             _save_signals_db(signals, db_path)
         except Exception as e:
             logger.warning(f"신호 DB 저장 실패 (계속 진행): {e}")
 
-        # 오늘 이미 알림 보낸 종목 필터링
-        alert_state = _load_alert_state(alert_state_file)
-        already_alerted = set(alert_state["codes"])
         new_signals = [s for s in signals if s["code"] not in already_alerted]
         skipped = len(signals) - len(new_signals)
         logger.info(f"신호 {len(signals)}개 중 신규 {len(new_signals)}개 "
@@ -682,9 +664,6 @@ def main():
         notifier = TelegramNotifier(telegram_token, telegram_chat_id)
         if new_signals:
             notifier.send_signals(new_signals)
-            # 상태 업데이트
-            alert_state["codes"] = sorted(already_alerted.union(s["code"] for s in new_signals))
-            _save_alert_state(alert_state_file, alert_state)
         else:
             logger.info("신규 신호 없음 - Telegram 전송 스킵")
 
