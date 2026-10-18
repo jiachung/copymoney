@@ -517,17 +517,56 @@ class TelegramNotifier:
         self.chat_id = chat_id
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
 
+    @staticmethod
+    def _grade_signal(s: Dict) -> int:
+        """Best 조건 4개 중 몇 개 충족? (0-4).
+        조건: ⭐⭐⭐⭐ / 5D 중간(2-5%) / VWAP 1-3% / 위험도 🟡(3-5%)"""
+        score = 0
+        if s.get("signal_strength", 0) >= 4:
+            score += 1
+        p5d = s.get("price_vs_5d", 0)
+        if 2 <= p5d < 5:
+            score += 1
+        vwap = s.get("price_vs_vwap", 0)
+        if 1 <= vwap < 3:
+            score += 1
+        risk = s.get("risk_pct", 999)
+        if 3 <= risk < 5:
+            score += 1
+        return score
+
+    @staticmethod
+    def _tier_prefix(grade: int) -> str:
+        return {4: "🏆", 3: "🥇", 2: "🥈"}.get(grade, "📌")
+
     def send_signals(self, signals: List[Dict]):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not signals:
             self._send_message(f"📊 {now}\n신호 없음")
             return
 
-        signals_sorted = sorted(signals, key=lambda x: x.get("signal_strength", 0), reverse=True)
+        # 티어 점수 계산 + 티어 desc, 강도 desc 순 정렬
+        for s in signals:
+            s["_grade"] = self._grade_signal(s)
+        signals_sorted = sorted(
+            signals,
+            key=lambda x: (x["_grade"], x.get("signal_strength", 0)),
+            reverse=True,
+        )
+
+        # 티어별 개수
+        from collections import Counter
+        tier_counts = Counter(s["_grade"] for s in signals_sorted)
+        tier_summary_parts = []
+        for g in (4, 3, 2, 1, 0):
+            if tier_counts.get(g):
+                tier_summary_parts.append(f"{self._tier_prefix(g)}{tier_counts[g]}")
+        tier_summary = " · ".join(tier_summary_parts)
 
         header = (
-            f"🚨 상승초기 종목 ({len(signals_sorted)}개)\n"
+            f"🚨 상승초기 종목 ({len(signals_sorted)}개)  {tier_summary}\n"
             f"⏰ {now}\n"
+            f"<i>티어: 🏆검증된Best / 🥇우수 / 🥈양호 / 📌기본</i>\n"
             + "=" * 30 + "\n\n"
         )
         buf = header
@@ -549,6 +588,8 @@ class TelegramNotifier:
         daily = s['daily_signal'].replace('5일선', '5D')
         vwap_gap = s['price_vs_vwap']
         price_vs_5d = s['price_vs_5d']
+        grade = s.get("_grade", TelegramNotifier._grade_signal(s))
+        tier = TelegramNotifier._tier_prefix(grade)
 
         if price_vs_5d < 2:
             entry_state = "⬆️ 충분히 떨어짐"
@@ -565,8 +606,10 @@ class TelegramNotifier:
         else:
             risk_state = "🔴 높음"
 
+        grade_badge = f"  <b>[{tier} Best {grade}/4]</b>" if grade >= 2 else ""
+
         return (
-            f"📌 <b>{s['name']}</b> ({s['code']}) {stars}\n"
+            f"{tier} <b>{s['name']}</b> ({s['code']}) {stars}{grade_badge}\n"
             f"└─ {weekly} • {daily} • VWAP {vwap_gap:+.1f}%\n\n"
             f"<b>진입</b>\n"
             f"  일봉 정배열: 5D {s['daily_5d']:,} > 20D {s['daily_20d']:,} ✓\n"
