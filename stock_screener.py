@@ -680,15 +680,21 @@ def main():
 
         # 성과 계산: 매일 15:30 이후 실행에서만
         now = datetime.now()
-        if now.hour >= 15 and now.minute >= 30:
+        now_hm = now.strftime("%H:%M")
+        if (now.hour, now.minute) >= (15, 30):
+            logger.info(f"성과 계산 조건 통과 (현재 {now_hm}) — 시작")
             try:
                 from performance import compute_pending_performance
                 compute_pending_performance(api, db_path)
             except Exception as e:
                 logger.warning(f"성과 계산 실패 (계속 진행): {e}")
+        else:
+            logger.info(f"성과 계산 조건 미달 (현재 {now_hm}, 15:30 이후만 실행) — 스킵")
 
         # 주간 리포트: 월요일 오전 실행에서만
+        weekday_name = ["월","화","수","목","금","토","일"][now.weekday()]
         if now.weekday() == 0 and now.hour < 12:
+            logger.info(f"주간 리포트 조건 통과 (현재 {weekday_name} {now_hm}) — 시작")
             try:
                 from performance import build_weekly_report
                 report = build_weekly_report(db_path)
@@ -699,6 +705,8 @@ def main():
                     logger.info("주간 리포트: 지난주 성과 데이터 없음, 스킵")
             except Exception as e:
                 logger.warning(f"주간 리포트 실패 (계속 진행): {e}")
+        else:
+            logger.info(f"주간 리포트 조건 미달 (현재 {weekday_name} {now_hm}, 월요일 오전만) — 스킵")
 
         # Google Sheets 동기화 (SHEETS_WEBHOOK_URL 세팅된 경우만)
         sheets_url = os.getenv("SHEETS_WEBHOOK_URL")
