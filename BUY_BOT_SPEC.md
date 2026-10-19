@@ -46,17 +46,40 @@ copymoney (스크리닝)
 - `price_vs_5d`, `price_vs_vwap`, `risk_pct` (%)
 - 기타 signal 분석 필드
 
-**매수 대상 쿼리 (오늘 신호 중 🏆 Best 4/4 티어):**
+**매수 대상: 🏆 Best 4/4 + 🥇 3/4 티어** (Python 필터로 처리, SQL은 당일 신호 전체):
+
 ```sql
+-- 1단계: 오늘 신호 전부 로드
 SELECT * FROM signals
 WHERE substr(run_at, 1, 10) = DATE('now', 'localtime')
-  AND signal_strength >= 4
-  AND price_vs_5d >= 2 AND price_vs_5d < 5
-  AND price_vs_vwap >= 1 AND price_vs_vwap < 3
-  AND risk_pct >= 3 AND risk_pct < 5
+ORDER BY id
 ```
 
-위 4개 조건 = 분석에서 검증된 Best 조합 (상승장 기준 승률 93-100%).
+```python
+# 2단계: 티어 점수 계산 + 필터
+def grade(s):
+    score = 0
+    if s['signal_strength'] == 4: score += 1
+    if 2 <= s['price_vs_5d'] < 5: score += 1
+    if 1 <= s['price_vs_vwap'] < 3: score += 1
+    if 3 <= s['risk_pct'] < 5: score += 1
+    return score
+
+# 🥇 3/4 이상만 (= 3 또는 4)
+candidates = [s for s in signals if grade(s) >= 3]
+
+# 우선순위: 티어 → 강도 순 (🏆 먼저)
+candidates.sort(key=lambda s: (grade(s), s['signal_strength']), reverse=True)
+```
+
+**4개 Best 조건:**
+- ⭐⭐⭐⭐ (`signal_strength == 4`)
+- 5D 이격 중간 (`2 ≤ price_vs_5d < 5`)
+- VWAP 이격 1-3% (`1 ≤ price_vs_vwap < 3`)
+- 위험도 🟡 (`3 ≤ risk_pct < 5`)
+
+→ 분석 검증: 🏆 4/4 상승장 승률 93-100%, 🥇 3/4 우수 등급.
+→ 🥇 3/4 포함 시 `signal_strength=3 (⭐⭐⭐)` 신호도 통과 가능 (예: ⭐⭐⭐ + 다른 3개 조건).
 
 ### 중복 방지 (buy_bot 자체 DB)
 
@@ -109,23 +132,33 @@ CREATE TABLE orders (
 
 ---
 
-## 포지션 사이징 (고정값, 추후 조정)
+## 포지션 사이징 (사용자 확정값)
 
 | 파라미터 | 값 |
 |---|---|
-| **총 투입 자본 (모의)** | 500만원 |
-| **종목당 투자 금액** | 50만원 (10%) |
-| **최대 보유 종목 수** | 10개 (풀 포지션) |
-| **하루 최대 신규 매수** | 5건 |
+| **총 투입 자본 (모의)** | **5,000만원** |
+| **종목당 투자 금액** | **1,000만원** (총자본의 20%) |
+| **최대 보유 종목 수** | **5개** (풀 포지션 = 5종목 × 1,000만원 = 5,000만원) |
+| **하루 최대 신규 매수** | **5건** (풀 포지션까지 하루에 채울 수 있음) |
 
 **주문 수량 계산:**
 ```python
-target_amount = 500_000  # 종목당 50만원
+target_amount = 10_000_000  # 종목당 1천만원
 shares = target_amount // order_price  # 소수점 버림 (정수 주식 수)
-# 최소 1주, 1주 가격이 50만원 초과하면 스킵 (고가주 제외)
+# 1주 가격이 1,000만원 초과하면 스킵 (고가주 제외)
 if shares < 1:
-    skip "고가주 (1주 > 50만원)"
+    skip "고가주 (1주 > 1,000만원)"
 ```
+
+**예시:**
+- 하나마이크론 46,000원 → 1천만원 / 46,000 = 217주 → 217 × 46,000 = 998만원 매수
+- 삼성전기 1,500,000원 → 1천만원 / 1,500,000 = 6주 → 6 × 1,500,000 = 900만원 매수
+- 가상 고가주 15,000,000원 → shares=0 → **스킵**
+
+**포지션 확장 희망 시 (추후):**
+- 5-6종목 분산 유지 희망 → 종목당 833만원 × 6종목 조정 가능 (env 변경)
+- 더 분산 → 500만원 × 10종목 (안전)
+- 집중 → 2,500만원 × 2종목 (고위험)
 
 ---
 
@@ -262,13 +295,14 @@ TRADE_MODE=paper              # ⚠️ paper 고정, 변경 시 수동 검토 �
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
 
-# 신규 (buy_bot)
+# 신규 (buy_bot) — 사용자 확정값
 BOT_ENABLED=true              # false 로 설정 시 봇 비활성
-BOT_CAPITAL=5000000           # 총 투입 자본 (원)
-BOT_PER_POSITION=500000       # 종목당 투자 금액
-BOT_MAX_POSITIONS=10          # 최대 보유 종목
-BOT_MAX_DAILY_ORDERS=5        # 하루 최대 신규 매수
-BOT_LIMIT_PRICE_MARGIN=1.002  # 지정가 margin (현재가 × 1.002)
+BOT_CAPITAL=50000000          # 총 투입 자본 5,000만원
+BOT_PER_POSITION=10000000     # 종목당 1,000만원 (총자본 × 20%)
+BOT_MAX_POSITIONS=5           # 최대 5종목 (풀 포지션)
+BOT_MAX_DAILY_ORDERS=5        # 하루 최대 신규 매수 5건
+BOT_LIMIT_PRICE_MARGIN=1.002  # 지정가 = 현재가 × 1.002
+BOT_MIN_GRADE=3               # 매수 티어 최소값 (3 = 🥇, 4 = 🏆만)
 ```
 
 ⚠️ **중요:** 지금 copymoney 의 `.env` 는 **실전 계좌** (73865321, TRADE_MODE=real) 로 설정되어 있음.
@@ -370,18 +404,18 @@ copymoney/
 
 ---
 
-## 예상 질문 / 결정 필요 사항
+## 사용자 확정 사항 (2026-10-20)
 
-구현 전 사용자 확정 필요:
+| # | 항목 | 확정값 |
+|---|---|---|
+| 1 | 총 투입 자본 (모의) | **5,000만원** |
+| 2 | 종목당 투자 금액 | **1,000만원** (5-6종목 분산) → 종목당 1천만원 × 5종목 선택 |
+| 3 | 지정가 margin | **×1.002** (현재가 대비 0.2% 위) |
+| 4 | 매수 티어 | **🥇 3/4 + 🏆 4/4** (grade ≥ 3) |
+| 5 | 고가주 처리 | **스킵** (1주 > 종목당 금액이면 매수 안 함) |
+| 6 | cron 시각 | **10:05 / 12:35 / 15:40** (copymoney 스크리닝 5분 후) |
 
-1. **총 투입 자본 (모의)**: 500만원 ← 기본, 조정 희망?
-2. **종목당 투자 금액**: 50만원 (10%) ← OK?
-3. **지정가 margin**: current_price × 1.002 ← OK? (너무 보수적이면 1.005 로)
-4. **매수 티어 범위**: 🏆 4/4 only ← OK? (🥇 3/4까지 확장 희망?)
-5. **고가주 처리**: 1주가 종목당 금액 초과 (예: 삼전 100만원) 시 스킵 ← OK?
-6. **cron 시각**: 10:05 / 12:35 / 15:40 ← OK? (좀 더 뒤로?)
-
-위 6개 확정 후 구현 착수.
+→ 구현 착수 가능.
 
 ---
 
