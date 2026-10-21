@@ -1,0 +1,68 @@
+name: Buy Bot (Paper)
+
+on:
+  # GitHub Actions cron 지연 이슈로 cron-job.org에서 workflow_dispatch 호출.
+  # 호출 시각: 10:05 / 12:35 / 15:40 KST (평일, copymoney 스크리닝 5분 후)
+  workflow_dispatch:
+
+concurrency:
+  group: buy-bot
+  cancel-in-progress: false
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write  # buy_bot/data/orders.db 자동 커밋용
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run buy bot
+        env:
+          KIS_PAPER_APP_KEY:           ${{ secrets.KIS_PAPER_APP_KEY }}
+          KIS_PAPER_APP_SECRET:        ${{ secrets.KIS_PAPER_APP_SECRET }}
+          KIS_PAPER_ACCOUNT_NO:        ${{ secrets.KIS_PAPER_ACCOUNT_NO }}
+          KIS_PAPER_ACCOUNT_PROD_CODE: ${{ secrets.KIS_PAPER_ACCOUNT_PROD_CODE }}
+          TELEGRAM_BOT_TOKEN:          ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:            ${{ secrets.TELEGRAM_CHAT_ID }}
+          TZ: Asia/Seoul
+        run: python -m buy_bot.main
+
+      - name: Commit orders DB
+        if: always()
+        run: |
+          if [ ! -f buy_bot/data/orders.db ]; then
+            echo "orders.db 없음, 커밋 스킵"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add buy_bot/data/orders.db
+          if git diff --cached --quiet; then
+            echo "변경사항 없음, 커밋 스킵"
+            exit 0
+          fi
+          git commit -m "chore(buy_bot): 주문 이력 업데이트 (run ${{ github.run_id }})"
+          # 다른 워크플로우(daily-screener)와 push 충돌 대비
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            echo "push 재시도 $i/3..."
+            sleep 2
+          done
+          echo "push 실패"
+          exit 1

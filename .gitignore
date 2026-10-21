@@ -15,6 +15,9 @@ stock_signals.json
 alert_state.json
 *.log
 
+# Buy bot — orders.db는 커밋 유지, 토큰 캐시만 제외
+buy_bot/data/kis_token.json
+
 # OS / Editor
 .DS_Store
 .idea/
