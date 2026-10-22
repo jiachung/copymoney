@@ -1,8 +1,12 @@
 name: Buy Bot (Paper)
 
 on:
-  # GitHub Actions cron 지연 이슈로 cron-job.org에서 workflow_dispatch 호출.
-  # 호출 시각: 10:05 / 12:35 / 15:40 KST (평일, copymoney 스크리닝 5분 후)
+  # Daily Stock Screener 완료 직후 자동 실행 (타이밍 완벽 보장).
+  # 수동 실행도 유지 (디버깅/임시 실행용).
+  workflow_run:
+    workflows: ["Daily Stock Screener"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -11,17 +15,21 @@ concurrency:
 
 jobs:
   trade:
+    # workflow_run 트리거 시 선행 workflow 성공했을 때만 실행.
+    # workflow_dispatch 시엔 조건 무시 (수동 실행은 항상 실행).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write  # buy_bot/data/orders.db 자동 커밋용
 
     steps:
-      - name: Checkout
+      - name: Checkout (latest main — includes just-committed signals.db)
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
