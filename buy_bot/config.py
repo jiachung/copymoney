@@ -34,6 +34,9 @@ BOT_MAX_POSITIONS      = int(os.getenv("BOT_MAX_POSITIONS", "5"))
 BOT_MAX_DAILY_ORDERS   = int(os.getenv("BOT_MAX_DAILY_ORDERS", "5"))
 BOT_LIMIT_PRICE_MARGIN = float(os.getenv("BOT_LIMIT_PRICE_MARGIN", "1.002"))
 BOT_MIN_GRADE          = int(os.getenv("BOT_MIN_GRADE", "3"))
+# 주봉 5선 이격도 상한 (%): 이보다 멀면 과열로 간주해 매수 스킵.
+# 데이터 분석(2026-10-22): 20-30% 구간 승률 40% / 5일 -7.85%, HT로보틱스 35.8% 급락 사례.
+BOT_MAX_WEEKLY_GAP_PCT = float(os.getenv("BOT_MAX_WEEKLY_GAP_PCT", "20.0"))
 
 # ── 경로 (same-repo 접근) ────────────────────────────
 REPO_ROOT       = Path(__file__).parent.parent

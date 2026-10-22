@@ -130,13 +130,33 @@ def main() -> None:
     _log(f"매수봇 시작 — {today} (TRADE_MODE=paper)")
 
     try:
-        candidates = load_candidates(cfg.SIGNALS_DB_PATH, today, cfg.BOT_MIN_GRADE)
+        # 1차: grade 만 통과 (주봉 상한 체크 전) — 로깅용
+        all_graded = load_candidates(cfg.SIGNALS_DB_PATH, today, cfg.BOT_MIN_GRADE)
+        # 2차: 주봉 상한 포함
+        candidates = load_candidates(
+            cfg.SIGNALS_DB_PATH, today, cfg.BOT_MIN_GRADE,
+            max_weekly_gap_pct=cfg.BOT_MAX_WEEKLY_GAP_PCT,
+        )
     except Exception as e:
         _log(f"신호 로드 실패: {e}")
         notify(f"❌ [신호 로드 실패] {e}")
         return
 
-    _log(f"신호 후보 {len(candidates)}건 (grade ≥ {cfg.BOT_MIN_GRADE})")
+    # 주봉 과열로 걸러진 종목 알림
+    passed_codes = {s["code"] for s in candidates}
+    for s in all_graded:
+        if s["code"] in passed_codes:
+            continue
+        w = s.get("weekly_gap_pct")
+        name = s.get("name", "")
+        _log(f"[주봉 과열 스킵] {s['code']} {name} 주봉 5선위 {w:.1f}% > {cfg.BOT_MAX_WEEKLY_GAP_PCT:.0f}%")
+        notify(
+            f"⚠️ [주봉 과열 스킵] {name} ({s['code']})\n"
+            f"주봉 5선위 {w:.1f}% > 상한 {cfg.BOT_MAX_WEEKLY_GAP_PCT:.0f}%\n"
+            f"(일봉/VWAP/위험도 조건은 통과했지만 주봉 과열로 매수 안 함)"
+        )
+
+    _log(f"신호 후보 {len(candidates)}건 (grade ≥ {cfg.BOT_MIN_GRADE}, 주봉≤{cfg.BOT_MAX_WEEKLY_GAP_PCT:.0f}%)")
     if not candidates:
         _log("매수 대상 없음 — 종료")
         return

@@ -3,9 +3,12 @@
 grade 로직은 copymoney/stock_screener.py의 _grade_signal과 동일.
 """
 
+import re
 import sqlite3
 from datetime import date
 from typing import Any
+
+_WEEKLY_GAP_RE = re.compile(r'봉_5선위_(-?\d+\.?\d*)%')
 
 
 def _grade(s: dict) -> int:
@@ -25,12 +28,23 @@ def _grade(s: dict) -> int:
     return score
 
 
+def parse_weekly_gap(weekly_signal: str | None) -> float | None:
+    """'봉_5선위_35.8%' → 35.8. 파싱 실패시 None."""
+    if not weekly_signal:
+        return None
+    m = _WEEKLY_GAP_RE.search(weekly_signal)
+    return float(m.group(1)) if m else None
+
+
 def load_candidates(db_path: str, today: str | None = None,
-                    min_grade: int = 3) -> list[dict[str, Any]]:
+                    min_grade: int = 3,
+                    max_weekly_gap_pct: float | None = None) -> list[dict[str, Any]]:
     """오늘 신호 중 grade >= min_grade만 반환. 티어 → 강도 순 정렬.
 
     today: YYYY-MM-DD (None이면 로컬 오늘).
     각 종목은 당일 가장 최신 run_at 신호 하나만 선택 (여러 번 재발사된 경우).
+    max_weekly_gap_pct: 주봉 5선 이격도 상한 (%). 초과하면 제외.
+                       None 이면 체크 안 함.
     """
     if today is None:
         today = date.today().isoformat()
@@ -51,7 +65,21 @@ def load_candidates(db_path: str, today: str | None = None,
         s = dict(r)
         latest[s["code"]] = s  # ORDER BY id → 뒤가 최신
 
-    graded = [{**s, "grade": _grade(s)} for s in latest.values()]
-    passed = [s for s in graded if s["grade"] >= min_grade]
+    graded = []
+    for s in latest.values():
+        s["grade"] = _grade(s)
+        s["weekly_gap_pct"] = parse_weekly_gap(s.get("weekly_signal"))
+        graded.append(s)
+
+    def _ok(s: dict) -> bool:
+        if s["grade"] < min_grade:
+            return False
+        if max_weekly_gap_pct is not None:
+            w = s["weekly_gap_pct"]
+            if w is not None and w > max_weekly_gap_pct:
+                return False
+        return True
+
+    passed = [s for s in graded if _ok(s)]
     passed.sort(key=lambda s: (s["grade"], s.get("signal_strength") or 0), reverse=True)
     return passed
