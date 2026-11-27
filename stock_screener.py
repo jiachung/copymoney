@@ -528,10 +528,11 @@ class TelegramNotifier:
         kp = f"코스피 {kospi.get('label','?')} ({kospi.get('gap_vs_20ma',0):+.1f}%)"
         kd = f"코스닥 {kosdaq.get('label','?')} ({kosdaq.get('gap_vs_20ma',0):+.1f}%)"
         advice_map = {
-            "bull":    "✅ 평상시 매수 OK",
-            "neutral": "⚠️ 신규 매수 축소 — 🏆 Best 4/4 만 권장",
-            "bear":    "🚨 매수 자제 + <b>보유 포지션 축소/손절 검토</b>",
-            "unknown": "ℹ️ 지수 데이터 부족, 참고용",
+            "bull":       "✅ 평상시 매수 OK (🥇 이상)",
+            "correction": "⚠️ 하락 중이지만 매수 기회 — 🏆 Best 4/4 만",
+            "neutral":    "⚠️ 방향 불명 — 🏆 Best 4/4 만",
+            "bear":       "🚨 폭락장 — 🏆 만 매수 + <b>보유 포지션 축소/손절 검토</b>",
+            "unknown":    "ℹ️ 지수 데이터 부족, 참고용",
         }
         advice = advice_map.get(regime.get("code"), "")
         return (

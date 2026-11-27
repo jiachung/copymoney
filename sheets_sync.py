@@ -31,6 +31,18 @@ PERF_FIELDS = [
     "horizon_days", "exit_date", "exit_price", "return_pct", "computed_at",
 ]
 
+# 숫자로 변환되면 안 되는 텍스트 필드 (코드/날짜) — Sheets 에 보낼 때 "'" prefix 로 강제 텍스트
+TEXT_FIELDS = {"code", "signal_date", "exit_date"}
+
+
+def _coerce_value(field: str, value):
+    """숫자 변환 방지가 필요한 필드는 "'" prefix 로 강제 텍스트화."""
+    if value is None:
+        return ""
+    if field in TEXT_FIELDS:
+        return "'" + str(value)
+    return value
+
 
 def _ensure_synced_column(conn: sqlite3.Connection, table: str):
     """synced_at 컬럼 없으면 추가 (idempotent)."""
@@ -72,7 +84,10 @@ def _sync_table(conn: sqlite3.Connection, webhook_url: str,
     for i in range(0, len(all_rows), BATCH_SIZE):
         batch = all_rows[i:i + BATCH_SIZE]
         ids = [r[0] for r in batch]
-        payload_rows = [[r[j + 1] for j in range(len(fields))] for r in batch]
+        payload_rows = [
+            [_coerce_value(fields[j], r[j + 1]) for j in range(len(fields))]
+            for r in batch
+        ]
         try:
             n = _post_batch(webhook_url, sheet_name, payload_rows)
             total_sent += n

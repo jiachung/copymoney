@@ -94,26 +94,38 @@ def classify_regime(closes: List[float], name: str = "지수") -> Dict:
     sma_20_past = _sma(closes[-25:-5], 20)
     trend = (sma_20_now - sma_20_past) / sma_20_past * 100 if sma_20_past else 0.0
 
-    # 분류
-    if gap >= 1.0 and trend > 0:
+    # 분류 — 4단계 (bull / neutral / correction / bear)
+    # 매트릭스 (2026-11-27 Option X1, 안전):
+    #   🔴 bear       (gap ≤ -10% 또는 모멘텀 ≤ -5%)  → 🏆만 (전면중단 X, 폭락장서도 베스트)
+    #   🟠 correction (gap -5~-1% 또는 모멘텀 -3~-1%) → 🏆만 (조정장서도 베스트)
+    #   🟡 neutral    (방향 불명)                       → 🏆만 (보수적)
+    #   🟢 bull       (gap ≥+1% 또는 모멘텀 > 0)      → 🥇 이상 (평상시)
+    if gap <= -10.0 or trend <= -5.0:
+        code = "bear"
+        label = "🔴 약세"
+        comment = (f"{name} {current:,.1f} ({gap:+.2f}% vs 20MA, 20MA {trend:+.2f}%). "
+                   f"⚠️ 심각한 폭락장. 🏆 Best 4/4 만 매수 허용, 보유 포지션 손절 검토.")
+        allow_buy = True
+        min_grade = 4  # 🏆만
+    elif gap <= -1.0 or trend <= -1.0:
+        code = "correction"
+        label = "🟠 조정"
+        comment = (f"{name} {current:,.1f} ({gap:+.2f}% vs 20MA, 20MA {trend:+.2f}%). "
+                   f"하락 중이지만 매수 기회 있음. 🏆 Best 4/4 만 매수 (안전).")
+        allow_buy = True
+        min_grade = 4  # 🏆만 (X1: 안전)
+    elif gap >= 1.0 and trend > 0:
         code = "bull"
         label = "🟢 강세"
         comment = (f"{name} {current:,.1f} (+{gap:.2f}% vs 20MA), 20MA 상향 중. "
                    f"평상시 매수 OK.")
         allow_buy = True
         min_grade = 3
-    elif gap <= -1.0 or trend < -1.0:
-        code = "bear"
-        label = "🔴 약세"
-        comment = (f"{name} {current:,.1f} ({gap:+.2f}% vs 20MA, 20MA {trend:+.2f}%). "
-                   f"⚠️ 매수 자제. 보유 종목 포지션 축소/손절 검토 권장.")
-        allow_buy = False
-        min_grade = 99  # 모든 매수 차단
     else:
         code = "neutral"
         label = "🟡 혼조"
         comment = (f"{name} {current:,.1f} ({gap:+.2f}% vs 20MA, 20MA {trend:+.2f}%). "
-                   f"🏆 Best 4/4 만 매수 권장, 신규 포지션 축소.")
+                   f"방향성 불명 → 🏆 Best 4/4 만 매수 권장.")
         allow_buy = True
         min_grade = 4  # 🏆만
 
@@ -125,7 +137,7 @@ def classify_regime(closes: List[float], name: str = "지수") -> Dict:
     }
 
 
-_SEVERITY = {"bull": 0, "neutral": 1, "bear": 2, "unknown": 0}
+_SEVERITY = {"bull": 0, "correction": 1, "neutral": 2, "bear": 3, "unknown": 0}
 
 
 def get_market_regime(api) -> Dict:
