@@ -37,6 +37,11 @@ BOT_MIN_GRADE          = int(os.getenv("BOT_MIN_GRADE", "3"))
 # 주봉 5선 이격도 상한 (%): 이보다 멀면 과열로 간주해 매수 스킵.
 # 데이터 분석(2026-10-22): 20-30% 구간 승률 40% / 5일 -7.85%, HT로보틱스 35.8% 급락 사례.
 BOT_MAX_WEEKLY_GAP_PCT = float(os.getenv("BOT_MAX_WEEKLY_GAP_PCT", "20.0"))
+# 지수 regime 필터 사용 여부. 기본 ON.
+# 🔴 약세 → 매수 전면 중단
+# 🟡 혼조 → 🏆 Best 4/4 만 매수
+# 🟢 강세 → 평상시 (BOT_MIN_GRADE 적용)
+BOT_USE_REGIME_FILTER = os.getenv("BOT_USE_REGIME_FILTER", "true").lower() == "true"
 
 # ── 경로 (same-repo 접근) ────────────────────────────
 REPO_ROOT       = Path(__file__).parent.parent

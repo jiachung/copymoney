@@ -518,6 +518,29 @@ class TelegramNotifier:
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
 
     @staticmethod
+    def _format_regime_block(regime: Optional[Dict]) -> str:
+        """메시지 헤더에 넣을 지수 regime 블록. regime 없으면 빈 문자열."""
+        if not regime:
+            return ""
+        label = regime.get("label", "")
+        kospi = regime.get("kospi") or {}
+        kosdaq = regime.get("kosdaq") or {}
+        kp = f"코스피 {kospi.get('label','?')} ({kospi.get('gap_vs_20ma',0):+.1f}%)"
+        kd = f"코스닥 {kosdaq.get('label','?')} ({kosdaq.get('gap_vs_20ma',0):+.1f}%)"
+        advice_map = {
+            "bull":    "✅ 평상시 매수 OK",
+            "neutral": "⚠️ 신규 매수 축소 — 🏆 Best 4/4 만 권장",
+            "bear":    "🚨 매수 자제 + <b>보유 포지션 축소/손절 검토</b>",
+            "unknown": "ℹ️ 지수 데이터 부족, 참고용",
+        }
+        advice = advice_map.get(regime.get("code"), "")
+        return (
+            f"📈 <b>지수 상태: {label}</b>\n"
+            f"  {kp} / {kd}\n"
+            f"  {advice}\n\n"
+        )
+
+    @staticmethod
     def _grade_signal(s: Dict) -> int:
         """Best 조건 4개 중 몇 개 충족? (0-4).
         조건: ⭐⭐⭐⭐ / 5D 중간(2-5%) / VWAP 1-3% / 위험도 🟡(3-5%)"""
@@ -539,10 +562,11 @@ class TelegramNotifier:
     def _tier_prefix(grade: int) -> str:
         return {4: "🏆", 3: "🥇", 2: "🥈"}.get(grade, "📌")
 
-    def send_signals(self, signals: List[Dict]):
+    def send_signals(self, signals: List[Dict], regime: Optional[Dict] = None):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        regime_block = self._format_regime_block(regime)
         if not signals:
-            self._send_message(f"📊 {now}\n신호 없음")
+            self._send_message(f"📊 {now}\n{regime_block}신호 없음")
             return
 
         # 티어 점수 계산 + 티어 desc, 강도 desc 순 정렬
@@ -566,6 +590,7 @@ class TelegramNotifier:
         header = (
             f"🚨 상승초기 종목 ({len(signals_sorted)}개)  {tier_summary}\n"
             f"⏰ {now}\n"
+            f"{regime_block}"
             f"<i>티어: 🏆검증된Best / 🥇우수 / 🥈양호 / 📌기본</i>\n"
             + "=" * 30 + "\n\n"
         )
@@ -715,10 +740,29 @@ def main():
                     f"알림 임계값(5D≤{max_5d_alert}%) 통과: {len(alert_signals)}개 "
                     f"(수집용만: {over_threshold}개)")
 
+        # 지수 regime 조회 + DB 저장 (buy_bot 이 참조)
+        regime = None
+        try:
+            from market_index import get_market_regime
+            from storage import save_regime_snapshot
+            regime = get_market_regime(api)
+            logger.info(f"지수 regime: {regime['label']} (코스피 {regime['kospi']['gap_vs_20ma']:+.2f}% / "
+                        f"코스닥 {regime['kosdaq']['gap_vs_20ma']:+.2f}%)")
+            save_regime_snapshot(db_path, regime)
+        except Exception as e:
+            logger.warning(f"지수 regime 조회 실패 (알림은 계속): {e}")
+
         notifier = TelegramNotifier(telegram_token, telegram_chat_id)
         if alert_signals:
-            notifier.send_signals(alert_signals)
+            notifier.send_signals(alert_signals, regime=regime)
         else:
+            # 신호 없어도 regime 상태는 알려주기 (하락장 경고용)
+            if regime and regime.get("code") == "bear":
+                notifier._send_message(
+                    f"📊 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    + notifier._format_regime_block(regime)
+                    + "신호 없음"
+                )
             logger.info("알림 대상 신호 없음 - Telegram 전송 스킵")
 
         # 성과 계산: 매일 15:30 이후 실행에서만

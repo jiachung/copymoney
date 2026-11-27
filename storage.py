@@ -57,6 +57,25 @@ CREATE TABLE IF NOT EXISTS performance (
     PRIMARY KEY (code, signal_date, horizon_days)
 );
 
+-- 지수 regime 스냅샷: 매 스크리닝 실행 시 코스피/코스닥 상태 저장.
+-- buy_bot 이 참조해 지수 필터 적용. 'daily_regime' 뷰: 날짜별 최신.
+CREATE TABLE IF NOT EXISTS regime_snapshots (
+    recorded_at TEXT NOT NULL PRIMARY KEY,  -- YYYY-MM-DD HH:MM:SS
+    overall_code TEXT,     -- bull | neutral | bear | unknown
+    overall_label TEXT,
+    allow_buy INTEGER,     -- 0/1
+    min_grade INTEGER,
+    kospi_gap REAL,
+    kospi_trend REAL,
+    kospi_code TEXT,
+    kosdaq_gap REAL,
+    kosdaq_trend REAL,
+    kosdaq_code TEXT,
+    raw_json TEXT          -- 원본 regime dict (기록용)
+);
+
+CREATE INDEX IF NOT EXISTS idx_regime_recorded ON regime_snapshots(recorded_at);
+
 CREATE INDEX IF NOT EXISTS idx_perf_signal_date ON performance(signal_date);
 CREATE INDEX IF NOT EXISTS idx_perf_horizon ON performance(horizon_days);
 """
@@ -139,6 +158,60 @@ def stats_summary(db_path: str = DEFAULT_DB_PATH) -> Dict:
             FROM signals
         """).fetchone()
         return dict(row)
+    finally:
+        conn.close()
+
+
+def save_regime_snapshot(db_path: str, regime: Dict) -> None:
+    """현재 regime 스냅샷 저장. 호출 시각 = recorded_at."""
+    import json
+    if not regime:
+        return
+    kospi = regime.get("kospi") or {}
+    kosdaq = regime.get("kosdaq") or {}
+    conn = get_db(db_path)
+    try:
+        conn.execute("""
+            INSERT OR REPLACE INTO regime_snapshots
+            (recorded_at, overall_code, overall_label, allow_buy, min_grade,
+             kospi_gap, kospi_trend, kospi_code,
+             kosdaq_gap, kosdaq_trend, kosdaq_code, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            regime.get("code"), regime.get("label"),
+            1 if regime.get("allow_buy") else 0,
+            regime.get("min_grade"),
+            kospi.get("gap_vs_20ma"), kospi.get("trend_20ma"), kospi.get("code"),
+            kosdaq.get("gap_vs_20ma"), kosdaq.get("trend_20ma"), kosdaq.get("code"),
+            json.dumps({k: v for k, v in regime.items() if k not in ("kospi", "kosdaq")},
+                       ensure_ascii=False, default=str),
+        ))
+        conn.commit()
+        logger.info(f"[storage] regime snapshot 저장: {regime.get('label')}")
+    finally:
+        conn.close()
+
+
+def get_latest_regime(db_path: str, max_age_hours: int = 8) -> Optional[Dict]:
+    """가장 최근 regime 스냅샷 반환. 너무 오래됐으면 None."""
+    if not os.path.exists(db_path):
+        return None
+    conn = get_db(db_path)
+    try:
+        row = conn.execute("""
+            SELECT * FROM regime_snapshots
+            ORDER BY recorded_at DESC LIMIT 1
+        """).fetchone()
+        if not row:
+            return None
+        row = dict(row)
+        # 만료 체크
+        rec = datetime.strptime(row["recorded_at"], "%Y-%m-%d %H:%M:%S")
+        if (datetime.now() - rec).total_seconds() > max_age_hours * 3600:
+            logger.warning(f"[storage] regime snapshot 만료 ({row['recorded_at']})")
+            return None
+        return row
     finally:
         conn.close()
 

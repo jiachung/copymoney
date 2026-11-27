@@ -129,12 +129,42 @@ def main() -> None:
     today = date.today().isoformat()
     _log(f"매수봇 시작 — {today} (TRADE_MODE=paper)")
 
+    # 지수 regime 조회 (copymoney 스크리너가 저장한 최신 스냅샷)
+    regime_min_grade = cfg.BOT_MIN_GRADE
+    if cfg.BOT_USE_REGIME_FILTER:
+        try:
+            from storage import get_latest_regime
+            regime = get_latest_regime(cfg.SIGNALS_DB_PATH, max_age_hours=8)
+        except Exception as e:
+            _log(f"regime 조회 실패 (필터 미적용): {e}")
+            regime = None
+
+        if regime is None:
+            _log("regime 스냅샷 없음/만료 — 지수 필터 생략")
+        else:
+            _log(f"지수 regime: {regime['overall_label']} (allow_buy={bool(regime['allow_buy'])}, "
+                 f"min_grade={regime['min_grade']}, 코스피 {regime['kospi_gap']:+.2f}%, "
+                 f"코스닥 {regime['kosdaq_gap']:+.2f}%)")
+            if not regime["allow_buy"]:
+                notify(
+                    f"🚨 [매수 중단 — 지수 약세] {today}\n\n"
+                    f"{regime['overall_label']}\n"
+                    f"코스피 {regime['kospi_gap']:+.2f}% / 코스닥 {regime['kosdaq_gap']:+.2f}% (20MA 대비)\n\n"
+                    f"⚠️ 보유 종목 포지션 축소/손절 검토 권장."
+                )
+                _log("지수 약세 — 매수 전면 중단하고 종료")
+                return
+            # 혼조면 min_grade 상향
+            if (regime["min_grade"] or 0) > regime_min_grade:
+                regime_min_grade = regime["min_grade"]
+                _log(f"지수 혼조 — 매수 티어 상향: min_grade {cfg.BOT_MIN_GRADE} → {regime_min_grade}")
+
     try:
         # 1차: grade 만 통과 (주봉 상한 체크 전) — 로깅용
-        all_graded = load_candidates(cfg.SIGNALS_DB_PATH, today, cfg.BOT_MIN_GRADE)
+        all_graded = load_candidates(cfg.SIGNALS_DB_PATH, today, regime_min_grade)
         # 2차: 주봉 상한 포함
         candidates = load_candidates(
-            cfg.SIGNALS_DB_PATH, today, cfg.BOT_MIN_GRADE,
+            cfg.SIGNALS_DB_PATH, today, regime_min_grade,
             max_weekly_gap_pct=cfg.BOT_MAX_WEEKLY_GAP_PCT,
         )
     except Exception as e:
