@@ -26,12 +26,15 @@ TRADE_MODE            = "paper"  # 하드코딩 — 실전 전환 금지
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 
-# ── BOT 파라미터 (spec 2026-10-20 사용자 확정) ──────────
+# ── BOT 파라미터 ────────────────────────────────
+# 2026-11-27: 5종목 → 10종목 확대 (놓친 홈런 분석 결과 반영).
+# 지난 한달 만석으로 못 매수한 신호 40건 중 홈런 12건 (안랩 +67%, 지니언스 +65% 등).
+# 10종목 분산으로 홈런 캐치 확률 2배 ↑, 종목당 금액은 500만원.
 BOT_ENABLED            = os.getenv("BOT_ENABLED", "true").lower() == "true"
 BOT_CAPITAL            = int(os.getenv("BOT_CAPITAL", "50000000"))
-BOT_PER_POSITION       = int(os.getenv("BOT_PER_POSITION", "10000000"))
-BOT_MAX_POSITIONS      = int(os.getenv("BOT_MAX_POSITIONS", "5"))
-BOT_MAX_DAILY_ORDERS   = int(os.getenv("BOT_MAX_DAILY_ORDERS", "5"))
+BOT_PER_POSITION       = int(os.getenv("BOT_PER_POSITION", "5000000"))    # 종목당 500만원
+BOT_MAX_POSITIONS      = int(os.getenv("BOT_MAX_POSITIONS", "10"))        # 최대 10종목
+BOT_MAX_DAILY_ORDERS   = int(os.getenv("BOT_MAX_DAILY_ORDERS", "10"))     # 하루 매수 상한
 BOT_LIMIT_PRICE_MARGIN = float(os.getenv("BOT_LIMIT_PRICE_MARGIN", "1.002"))
 BOT_MIN_GRADE          = int(os.getenv("BOT_MIN_GRADE", "3"))
 # 주봉 5선 이격도 상한 (%): 이보다 멀면 과열로 간주해 매수 스킵.
