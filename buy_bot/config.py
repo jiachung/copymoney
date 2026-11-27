@@ -43,6 +43,13 @@ BOT_MAX_WEEKLY_GAP_PCT = float(os.getenv("BOT_MAX_WEEKLY_GAP_PCT", "20.0"))
 # 🟢 강세 → 평상시 (BOT_MIN_GRADE 적용)
 BOT_USE_REGIME_FILTER = os.getenv("BOT_USE_REGIME_FILTER", "true").lower() == "true"
 
+# 매도 로직 (Phase 2, 2026-11-27 추가)
+# 자동 손절: 평가손 이 % 이하면 시장가 전량 매도. 익절은 수동 (모바일)
+BOT_SELL_ENABLED       = os.getenv("BOT_SELL_ENABLED", "true").lower() == "true"
+BOT_STOP_LOSS_PCT      = float(os.getenv("BOT_STOP_LOSS_PCT", "7.0"))
+# 매수 금지 시각 (HH:MM). 장 마감 전 N분부터 매수 스킵. 매도는 계속 돎.
+BOT_BUY_CUTOFF_HHMM    = os.getenv("BOT_BUY_CUTOFF_HHMM", "15:00")
+
 # ── 경로 (same-repo 접근) ────────────────────────────
 REPO_ROOT       = Path(__file__).parent.parent
 SIGNALS_DB_PATH = str(REPO_ROOT / "data" / "signals.db")

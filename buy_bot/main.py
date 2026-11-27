@@ -22,11 +22,13 @@ from buy_bot import config as cfg
 from buy_bot.kis_client import (
     buy_limit_order, floor_to_tick,
     get_account_balance, get_current_price_info,
+    sell_market_order,
 )
 from buy_bot.notifier import notify
 from buy_bot.signals import load_candidates
 from buy_bot.storage import (
-    active_holdings, count_today, has_order_today, init_db, insert_order,
+    active_holdings, active_positions, count_today, has_order_today,
+    init_db, insert_order, mark_sold,
 )
 
 
@@ -35,6 +37,75 @@ _GRADE_TAG = {4: "🏆 Best 4/4", 3: "🥇 3/4"}
 
 def _log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
+
+def _past_buy_cutoff(now: datetime) -> bool:
+    """매수 금지 시각 지났는지. 15:00 이후면 True."""
+    try:
+        hh, mm = map(int, cfg.BOT_BUY_CUTOFF_HHMM.split(":"))
+    except Exception:
+        hh, mm = 15, 0
+    return (now.hour, now.minute) >= (hh, mm)
+
+
+def _run_stop_loss_check() -> int:
+    """현재 보유 포지션에 대해 -X% 손절 체크 → 시장가 매도.
+    Returns: 매도 체결 건수."""
+    if not cfg.BOT_SELL_ENABLED:
+        _log("[sell] BOT_SELL_ENABLED=false — 매도 체크 스킵")
+        return 0
+
+    positions = active_positions(cfg.ORDERS_DB_PATH)
+    if not positions:
+        _log("[sell] 보유 포지션 없음")
+        return 0
+
+    _log(f"[sell] 보유 {len(positions)}건 — 손절 -{cfg.BOT_STOP_LOSS_PCT}% 체크")
+    sold_count = 0
+
+    for pos in positions:
+        code = pos["code"]; name = pos["name"]; entry = pos["entry"]; shares = pos["shares"]
+        try:
+            info = get_current_price_info(code)
+            cur = float(info["current"])
+        except Exception as e:
+            _log(f"  [{code}] 현재가 조회 실패: {e}")
+            continue
+
+        ret_pct = (cur - entry) / entry * 100
+        if ret_pct > -cfg.BOT_STOP_LOSS_PCT:
+            _log(f"  [{code}] {name} 평가손 {ret_pct:+.2f}% — 손절선 안쪽 (유지)")
+            continue
+
+        # 손절 발동
+        _log(f"  [{code}] {name} 평가손 {ret_pct:+.2f}% — 손절 발동 (entry {entry:,} / 현재 {cur:,.0f})")
+        try:
+            res = sell_market_order(code, int(shares))
+            out = res.get("output", {}) if isinstance(res, dict) else {}
+            kis_no = f"{out.get('KRX_FWDG_ORD_ORGNO', '')}/{out.get('ODNO', '')}".strip("/")
+            sold_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # 시장가라 체결가는 사후 조회해야 정확하나, 일단 호가 기준 current 로 기록
+            mark_sold(cfg.ORDERS_DB_PATH, pos["id"],
+                      sold_at=sold_at, sold_price=int(cur),
+                      sold_shares=int(shares), sold_reason="STOP_LOSS")
+            pnl = (cur - entry) * shares
+            notify(
+                f"🛑 [손절 매도] {sold_at} (모의)\n\n"
+                f"📌 {name} ({code})\n"
+                f"  매수가: {entry:,}원 × {shares}주 = {entry*shares:,}원\n"
+                f"  매도가(시장가): 약 {cur:,.0f}원\n"
+                f"  평가손익: {pnl:+,.0f}원 ({ret_pct:+.2f}%)\n"
+                f"  손절선 설정: -{cfg.BOT_STOP_LOSS_PCT}%\n"
+                f"  KIS 주문번호: {kis_no or 'N/A'}"
+            )
+            sold_count += 1
+        except Exception as e:
+            err = str(e)
+            _log(f"  [{code}] 매도 실패: {err}")
+            notify(f"❌ [손절 매도 실패] {name} ({code})\n이유: {err}\n수동 확인 필요")
+
+    _log(f"[sell] 손절 매도 완료 {sold_count}건")
+    return sold_count
 
 
 def _place_order(sig: dict, available_cash: float) -> dict | None:
@@ -127,7 +198,20 @@ def main() -> None:
         return
 
     today = date.today().isoformat()
-    _log(f"매수봇 시작 — {today} (TRADE_MODE=paper)")
+    now = datetime.now()
+    _log(f"봇 시작 — {today} {now.strftime('%H:%M')} (TRADE_MODE=paper)")
+
+    # 1) 매도 로직 (손절 체크) — 매수 전에 먼저 실행 (포지션 정리 후 매수)
+    try:
+        _run_stop_loss_check()
+    except Exception as e:
+        _log(f"[sell] 매도 체크 전체 실패: {e}")
+        notify(f"❌ [매도 체크 실패] {e}")
+
+    # 2) 매수 시간 cutoff 체크 — 15:00 이후면 매수 스킵
+    if _past_buy_cutoff(now):
+        _log(f"매수 금지 시각 ({cfg.BOT_BUY_CUTOFF_HHMM}) 이후 — 매수 스킵, 종료")
+        return
 
     # 지수 regime 조회 (copymoney 스크리너가 저장한 최신 스냅샷)
     regime_min_grade = cfg.BOT_MIN_GRADE

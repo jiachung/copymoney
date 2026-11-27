@@ -41,6 +41,11 @@ def _migrate(con: sqlite3.Connection) -> None:
     for col in ("stop_loss", "resistance"):
         if col not in cols:
             con.execute(f"ALTER TABLE orders ADD COLUMN {col} INTEGER")
+    # 매도 정보 컬럼 (Phase 2)
+    for col, typ in [("sold_at", "TEXT"), ("sold_price", "INTEGER"),
+                     ("sold_reason", "TEXT"), ("sold_shares", "INTEGER")]:
+        if col not in cols:
+            con.execute(f"ALTER TABLE orders ADD COLUMN {col} {typ}")
 
 
 def _conn(db_path: Path) -> sqlite3.Connection:
@@ -80,12 +85,38 @@ def count_today(db_path: Path, today: str | None = None) -> int:
 
 
 def active_holdings(db_path: Path) -> set[str]:
-    """매도 로직 없는 단계에서 보유 포지션 근사 — SUBMITTED/FILLED 상태 전체."""
+    """현재 보유 포지션의 종목코드 집합.
+    SUBMITTED/FILLED 이면서 매도 안된(sold_at IS NULL) 종목만."""
     with _conn(db_path) as con:
         rows = con.execute(
-            "SELECT DISTINCT code FROM orders WHERE status IN ('SUBMITTED', 'FILLED')"
+            "SELECT DISTINCT code FROM orders "
+            "WHERE status IN ('SUBMITTED', 'FILLED') AND sold_at IS NULL"
         ).fetchall()
     return {r["code"] for r in rows}
+
+
+def active_positions(db_path: Path) -> list[dict]:
+    """매도 로직용: 현재 보유 중인 포지션 상세 (code, name, entry, shares, order_id)."""
+    with _conn(db_path) as con:
+        rows = con.execute(
+            "SELECT id, code, name, order_price AS entry, order_shares AS shares, "
+            "       submitted_at, stop_loss "
+            "FROM orders "
+            "WHERE status IN ('SUBMITTED', 'FILLED') AND sold_at IS NULL "
+            "ORDER BY submitted_at"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_sold(db_path: Path, order_id: int, *, sold_at: str, sold_price: int,
+              sold_shares: int, sold_reason: str) -> None:
+    """특정 주문을 매도 완료로 마킹."""
+    with _conn(db_path) as con:
+        con.execute(
+            "UPDATE orders SET sold_at = ?, sold_price = ?, sold_shares = ?, "
+            "       sold_reason = ? WHERE id = ?",
+            (sold_at, sold_price, sold_shares, sold_reason, order_id),
+        )
 
 
 def insert_order(db_path: Path, *, submitted_at: str, code: str, name: str,

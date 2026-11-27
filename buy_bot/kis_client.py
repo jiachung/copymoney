@@ -19,7 +19,7 @@ from buy_bot.config import (
 TOKEN_CACHE_FILE = Path(__file__).parent / "data" / "kis_token.json"
 
 # 모의계좌(VTTC) 전용 TR
-_TR = {"buy": "VTTC0802U", "balance": "VTTC8908R"}
+_TR = {"buy": "VTTC0802U", "sell": "VTTC0801U", "balance": "VTTC8908R"}
 
 
 class NoPositionError(RuntimeError):
@@ -169,3 +169,16 @@ def buy_limit_order(ticker: str, price: float, shares: int) -> dict:
         "ORD_UNPR": str(floor_to_tick(price)),
     }
     return _post_order(_TR["buy"], body, "매수", ticker)
+
+
+def sell_market_order(ticker: str, shares: int) -> dict:
+    """시장가 매도 (손절용 — 빠른 체결 우선)."""
+    body = {
+        "CANO": KIS_ACCOUNT_NO,
+        "ACNT_PRDT_CD": KIS_ACCOUNT_PROD_CODE,
+        "PDNO": ticker,
+        "ORD_DVSN": "01",   # 01 = 시장가
+        "ORD_QTY": str(shares),
+        "ORD_UNPR": "0",
+    }
+    return _post_order(_TR["sell"], body, "매도", ticker)
